@@ -4,13 +4,42 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/webview/webview_runtime.dart';
 import '../../../../core/webview/webview_url.dart';
+import '../../../locale/presentation/providers/locale_controller.dart';
 import '../providers/greeting_controller.dart';
 
-class WebViewScreen extends ConsumerWidget {
+// ใช้ ConsumerStatefulWidget เพราะต้อง override dispose() เพื่อ detach controller
+// ออกจาก WebViewRuntime ตอนหน้าโดน pop — ถ้าไม่ทำ runtime จะถือ reference ของ
+// InAppWebViewController ที่ถูก dispose แล้ว แล้วครั้งถัดไปที่ emit() จะ throw
+// "InAppWebViewController was used after being disposed"
+class WebViewScreen extends ConsumerStatefulWidget {
   const WebViewScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<WebViewScreen> createState() => _WebViewScreenState();
+}
+
+class _WebViewScreenState extends ConsumerState<WebViewScreen> {
+  // cache notifier ไว้ตั้งแต่ initState — ใน dispose() ใช้ ref ไม่ได้แล้ว
+  // (Riverpod throw "Cannot use ref after the widget was disposed")
+  // WebViewRuntime ใช้ keepAlive:true → instance เดียวตลอดอายุแอป → cache ปลอดภัย
+  late final WebViewRuntime _runtime;
+
+  @override
+  void initState() {
+    super.initState();
+    _runtime = ref.read(webViewRuntimeProvider.notifier);
+  }
+
+  @override
+  void dispose() {
+    // ปลด reference ของ controller ก่อนที่ Flutter framework จะ dispose มัน
+    // หลังจากนี้ emit() ใน WebViewRuntime จะเห็น _controller == null และ return เงียบๆ
+    _runtime.detach();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('JS Bridge POC')),
       body: SafeArea(
@@ -41,6 +70,17 @@ class WebViewScreen extends ConsumerWidget {
                 return ref
                     .read(greetingControllerProvider.notifier)
                     .getGreeting(name: name);
+              },
+            );
+
+            // handler 'getLocale' — JS เรียกตอน mount เพื่ออ่าน locale เริ่มต้นจาก Flutter
+            // delegate ไปที่ LocaleController โดยไม่มี logic ใน callback (Pure UI)
+            controller.addJavaScriptHandler(
+              handlerName: 'getLocale',
+              callback: (args) {
+                return ref
+                    .read(localeControllerProvider.notifier)
+                    .getLocale();
               },
             );
           },
